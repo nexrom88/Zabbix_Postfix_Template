@@ -1,0 +1,238 @@
+zabbix_export:
+  version: '7.2'
+  template_groups:
+    - uuid: a571c0d144b14fd4a87a9d9b2aa9fcd6
+      name: Templates/Applications
+  templates:
+    - uuid: 220c1adbab9043db891e3023bec75695
+      template: Postfix
+      name: Postfix
+      groups:
+        - name: Templates/Applications
+      items:
+        - uuid: 365e610caf154628833697a6a38b30f0
+          name: 'Sent mail'
+          type: ZABBIX_ACTIVE
+          key: 'logrt.count[{$LOGPATH}$,"(postfix/smtp)+.*to=<.*@(?!localhost).*status=sent"]'
+        - uuid: 12abdd7702f94af5920e86faefed8091
+          name: 'Received mail'
+          type: ZABBIX_ACTIVE
+          key: 'logrt.count[{$LOGPATH}$,"(smtp)+.*to=<.*@localhost>.*status=sent"]'
+        - uuid: 22254b1766574c6fa6bceeb68e4d08e3
+          name: 'Received spam'
+          type: ZABBIX_ACTIVE
+          key: 'logrt.count[{$LOGPATH}$,"amavis.*Passed SPAM"]'
+        - uuid: 2bda7177fb064b62b74323972a8483c1
+          name: 'Rejected mail'
+          type: ZABBIX_ACTIVE
+          key: 'logrt.count[{$LOGPATH}$,"NOQUEUE: reject"]'
+        - uuid: d0d5f8ef025d4aab8ba5649a23a6e5b6
+          name: Connections
+          type: ZABBIX_ACTIVE
+          key: 'logrt.count[{$LOGPATH}$,"postfix/smtpd.*connect from"]'
+      discovery_rules:
+        - uuid: 9dafd1937f2f4da6a3a60dac85f2548a
+          name: 'Service units discovery'
+          key: 'systemd.unit.discovery[service]'
+          delay: 30m
+          filter:
+            evaltype: AND
+            conditions:
+              - macro: '{#UNIT.ACTIVESTATE}'
+                value: '{$SYSTEMD.ACTIVESTATE.SERVICE.MATCHES}'
+              - macro: '{#UNIT.ACTIVESTATE}'
+                value: '{$SYSTEMD.ACTIVESTATE.SERVICE.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+              - macro: '{#UNIT.NAME}'
+                value: '{$SYSTEMD.NAME.SERVICE.MATCHES}'
+              - macro: '{#UNIT.NAME}'
+                value: '{$SYSTEMD.NAME.SERVICE.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+              - macro: '{#UNIT.UNITFILESTATE}'
+                value: '{$SYSTEMD.UNITFILESTATE.SERVICE.MATCHES}'
+              - macro: '{#UNIT.UNITFILESTATE}'
+                value: '{$SYSTEMD.UNITFILESTATE.SERVICE.NOT_MATCHES}'
+                operator: NOT_MATCHES_REGEX
+          description: 'Discover systemd service units and their details.'
+          item_prototypes:
+            - uuid: faddcf637c3a4a8da6fc3f183395484d
+              name: '{#UNIT.NAME}: Active state'
+              type: DEPENDENT
+              key: 'systemd.service.active_state["{#UNIT.NAME}"]'
+              description: 'State value that reflects whether the unit is currently active or not. The following states are currently defined: "active", "reloading", "inactive", "failed", "activating", and "deactivating".'
+              valuemap:
+                name: 'Unit Active State'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.ActiveState.state
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 30m
+              master_item:
+                key: 'systemd.unit.get["{#UNIT.NAME}"]'
+              tags:
+                - tag: component
+                  value: service
+              trigger_prototypes:
+                - uuid: ad99fc947213439e8f7341c12cb29e1d
+                  expression: 'last(/Postfix/systemd.service.active_state["{#UNIT.NAME}"])<>1'
+                  name: 'Systemd: {#UNIT.NAME}: Service is not running'
+                  priority: WARNING
+                  manual_close: 'YES'
+                  tags:
+                    - tag: scope
+                      value: availability
+            - uuid: 16bd88be4970430fbc8734df23bebc56
+              name: '{#UNIT.NAME}: Load state'
+              type: DEPENDENT
+              key: 'systemd.service.load_state["{#UNIT.NAME}"]'
+              description: 'State value that reflects whether the configuration file of this unit has been loaded. The following states are currently defined: "loaded", "error", and "masked".'
+              valuemap:
+                name: 'Unit Load State'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.LoadState.state
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 30m
+              master_item:
+                key: 'systemd.unit.get["{#UNIT.NAME}"]'
+              tags:
+                - tag: component
+                  value: service
+            - uuid: 429fa0bc358543e493ab75e3661ea44a
+              name: '{#UNIT.NAME}: Unit file state'
+              type: DEPENDENT
+              key: 'systemd.service.unitfile_state["{#UNIT.NAME}"]'
+              description: 'Encodes the install state of the unit file of FragmentPath. It currently knows the following states: "enabled", "enabled-runtime", "linked", "linked-runtime", "masked", "masked-runtime", "static", "disabled", and "invalid".'
+              valuemap:
+                name: 'Unit File State'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - $.UnitFileState.state
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 30m
+              master_item:
+                key: 'systemd.unit.get["{#UNIT.NAME}"]'
+              tags:
+                - tag: component
+                  value: service
+            - uuid: 61d0f43505354facb1eb24076700d1c3
+              name: '{#UNIT.NAME}: Active time'
+              type: DEPENDENT
+              key: 'systemd.service.uptime["{#UNIT.NAME}"]'
+              value_type: FLOAT
+              units: s
+              description: 'Number of seconds since unit entered the active state.'
+              preprocessing:
+                - type: JAVASCRIPT
+                  parameters:
+                    - |
+                      data = JSON.parse(value);
+                      if (data.ActiveEnterTimestamp > data.ActiveExitTimestamp) {
+                        return Math.floor(Date.now() / 1000) - Number(data.ActiveEnterTimestamp) / 1000000;
+                      }
+                      return null;
+              master_item:
+                key: 'systemd.unit.get["{#UNIT.NAME}"]'
+              tags:
+                - tag: component
+                  value: service
+              trigger_prototypes:
+                - uuid: 72d8622a922345cb97759749e76979cc
+                  expression: 'last(/Postfix/systemd.service.uptime["{#UNIT.NAME}"])<10m'
+                  name: 'Systemd: {#UNIT.NAME}: has been restarted'
+                  event_name: 'Systemd: {#UNIT.NAME}: has been restarted (uptime < 10m)'
+                  priority: INFO
+                  description: 'Uptime is less than 10 minutes.'
+                  manual_close: 'YES'
+                  tags:
+                    - tag: scope
+                      value: notice
+            - uuid: d9400b7fa0564fe999d1cc885c6e4aed
+              name: '{#UNIT.NAME}: Get unit info'
+              key: 'systemd.unit.get["{#UNIT.NAME}"]'
+              history: '0'
+              value_type: TEXT
+              description: |
+                Returns all properties of a systemd service unit.
+                 Unit description: {#UNIT.DESCRIPTION}.
+              tags:
+                - tag: component
+                  value: raw
+                - tag: component
+                  value: unit
+      tags:
+        - tag: class
+          value: software
+        - tag: target
+          value: systemd
+      macros:
+        - macro: '{$LOGPATH}'
+          value: /var/log/mail.log
+          description: 'Path where to find postfix logfile'
+        - macro: '{$SYSTEMD.ACTIVESTATE.SERVICE.MATCHES}'
+          value: active
+          description: 'Filter of systemd service units by active state'
+        - macro: '{$SYSTEMD.NAME.SERVICE.MATCHES}'
+          value: postfix
+          description: 'Filter of systemd service units by name'
+        - macro: '{$SYSTEMD.UNITFILESTATE.SERVICE.MATCHES}'
+          value: enabled
+          description: 'Filter of systemd service units by unit file state'
+      valuemaps:
+        - uuid: b85b8fca461f43418bca345bc0f51572
+          name: 'Unit Active State'
+          mappings:
+            - value: '0'
+              newvalue: unknown
+            - value: '1'
+              newvalue: active
+            - value: '2'
+              newvalue: reloading
+            - value: '3'
+              newvalue: inactive
+            - value: '4'
+              newvalue: failed
+            - value: '5'
+              newvalue: activating
+            - value: '6'
+              newvalue: deactivating
+        - uuid: 5a24fd7699414d9dacbb908326903b84
+          name: 'Unit File State'
+          mappings:
+            - value: '0'
+              newvalue: unknown
+            - value: '1'
+              newvalue: enabled
+            - value: '2'
+              newvalue: enabled-runtime
+            - value: '3'
+              newvalue: linked
+            - value: '4'
+              newvalue: linked-runtime
+            - value: '5'
+              newvalue: masked
+            - value: '6'
+              newvalue: masked-runtime
+            - value: '7'
+              newvalue: static
+            - value: '8'
+              newvalue: disabled
+            - value: '9'
+              newvalue: invalid
+        - uuid: b56d6c8fe7e34a15af194a5e802cbdf9
+          name: 'Unit Load State'
+          mappings:
+            - value: '0'
+              newvalue: unknown
+            - value: '1'
+              newvalue: loaded
+            - value: '2'
+              newvalue: error
+            - value: '3'
+              newvalue: masked
